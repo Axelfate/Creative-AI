@@ -1,0 +1,428 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>I Love You Andrea - Interactivo</title>
+    <link href="https://fonts.googleapis.com/css2?family=Dancing+Script:wght@700&display=swap" rel="stylesheet">
+    <style>
+        * {
+            box-sizing: border-box;
+        }
+        body, html {
+            margin: 0;
+            padding: 0;
+            width: 100vw;
+            height: 100vh;
+            overflow: hidden;
+            background-color: #050505;
+            font-family: sans-serif;
+            /* Prevents blue select highlight on mobile */
+            -webkit-tap-highlight-color: transparent;
+            touch-action: none; 
+        }
+        /* Fondo con resplandor radial rojo muy suave */
+        #background-glow {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: radial-gradient(circle at center, rgba(40, 5, 10, 0.6) 0%, #050505 70%);
+            z-index: 0;
+        }
+        canvas {
+            display: block;
+            position: relative;
+            z-index: 1;
+        }
+        #loading {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            color: rgba(255, 255, 255, 0.5);
+            z-index: 2;
+            pointer-events: none;
+            transition: opacity 0.5s ease;
+        }
+    </style>
+</head>
+<body>
+    <div id="background-glow"></div>
+    <div id="loading">Cargando magia...</div>
+    <canvas id="canvas"></canvas>
+
+    <script>
+        const canvas = document.getElementById('canvas');
+        const ctx = canvas.getContext('2d');
+        const loadingText = document.getElementById('loading');
+        
+        let width, height;
+        const PARTICLE_COUNT = 1200; // Recuento constante para el fondo
+        const particles = [];
+        const interactiveParticles = []; // Nuevo arreglo para partículas interactivas
+        const PALETTE = ['#ff0040', '#ff007f', '#ff4d4d', '#ff1a1a', '#ff99cc'];
+
+        // Máquina de estados para las fases de la animación de fondo
+        const PHASES = [
+            { name: 'HEART_FORM', duration: 240 },     // 4 seg aprox a 60fps
+            { name: 'HEART_BEAT', duration: 180 },     // 3 seg
+            { name: 'HEART_DISPERSE', duration: 120 }, // 2 seg
+            { name: 'TEXT_FORM', duration: 240 },      // 4 seg
+            { name: 'TEXT_HOLD', duration: 180 },      // 3 seg
+            { name: 'TEXT_DISPERSE', duration: 120 }   // 2 seg
+        ];
+        
+        let currentPhaseIndex = 0;
+        let phaseFrame = 0;
+
+        // Clase que maneja el vector y física de cada partícula de FONDO
+        class Particle {
+            constructor() {
+                this.x = Math.random() * window.innerWidth;
+                this.y = Math.random() * window.innerHeight;
+                this.vx = (Math.random() - 0.5) * 2;
+                this.vy = (Math.random() - 0.5) * 2;
+                this.tx = null; // Objetivo X
+                this.ty = null; // Objetivo Y
+                this.color = PALETTE[Math.floor(Math.random() * PALETTE.length)];
+                this.size = Math.random() * 1.5 + 1;
+                this.friction = Math.random() * 0.04 + 0.90; // Roce para movimiento suave
+                this.ease = Math.random() * 0.02 + 0.03;     // Tensión del resorte hacia el objetivo
+            }
+
+            update() {
+                let targetX = this.tx;
+                let targetY = this.ty;
+
+                // Si hay un objetivo, calcular fuerza hacia él
+                if (targetX !== null && targetY !== null) {
+                    // Aplicar latido dinámico durante la fase 2
+                    if (PHASES[currentPhaseIndex].name === 'HEART_BEAT') {
+                        // Latido basado en una función seno rápida
+                        const beat = 1 + 0.08 * Math.sin(phaseFrame * 0.15);
+                        const cx = width / 2;
+                        const cy = height / 2;
+                        targetX = cx + (this.tx - cx) * beat;
+                        targetY = cy + (this.ty - cy) * beat;
+                    }
+
+                    const dx = targetX - this.x;
+                    const dy = targetY - this.y;
+                    this.vx += dx * this.ease;
+                    this.vy += dy * this.ease;
+                }
+
+                this.vx *= this.friction;
+                this.vy *= this.friction;
+                this.x += this.vx;
+                this.y += this.vy;
+            }
+
+            draw() {
+                ctx.fillStyle = this.color;
+                ctx.beginPath();
+                ctx.arc(this.x, this.y, this.size, 0, Math.PI * 2);
+                ctx.fill();
+            }
+
+            explode() {
+                this.tx = null;
+                this.ty = null;
+                const angle = Math.random() * Math.PI * 2;
+                const speed = Math.random() * 10 + 3;
+                this.vx += Math.cos(angle) * speed;
+                this.vy += Math.sin(angle) * speed;
+            }
+        }
+
+        // NUEVA CLASE: Partículas Interactivas (Estrellas y Corazones)
+        class InteractiveParticle {
+            constructor(x, y, speedMult = 1) {
+                this.x = x;
+                this.y = y;
+                // Velocidad inicial explosiva (más rápida para clicks)
+                this.vx = (Math.random() - 0.5) * 10 * speedMult;
+                this.vy = (Math.random() - 0.5) * 10 * speedMult;
+                // Tamaño base
+                this.size = Math.random() * 4 + 3; 
+                // Color de la paleta
+                this.color = PALETTE[Math.floor(Math.random() * PALETTE.length)];
+                // Transparencia (fading)
+                this.alpha = 1;
+                // Decaimiento (más rápido para interacciones continuas)
+                this.decay = (Math.random() * 0.02 + 0.015) * speedMult;
+                // Forma aleatoria
+                this.shape = Math.random() < 0.5 ? 'star' : 'heart';
+            }
+
+            update() {
+                this.vx *= 0.96; // Rozamiento
+                this.vy *= 0.96;
+                this.x += this.vx;
+                this.y += this.vy;
+                this.alpha -= this.decay;
+                return this.alpha > 0; // Retorna true si sigue viva
+            }
+
+            draw() {
+                ctx.save();
+                ctx.globalAlpha = this.alpha;
+                ctx.fillStyle = this.color;
+                ctx.beginPath();
+                if (this.shape === 'star') {
+                    this.drawStar(this.x, this.y, 5, this.size, this.size / 2);
+                } else {
+                    this.drawHeart(this.x, this.y, this.size);
+                }
+                ctx.fill();
+                ctx.restore();
+            }
+
+            drawStar(x, y, points, outerRadius, innerRadius) {
+                let angle = (Math.PI * 2) / points;
+                for (let i = 0; i < points * 2; i++) {
+                    let r = i % 2 === 0 ? outerRadius : innerRadius;
+                    let currX = x + Math.cos(i * angle / 2 - Math.PI / 2) * r;
+                    let currY = y + Math.sin(i * angle / 2 - Math.PI / 2) * r;
+                    if (i === 0) ctx.moveTo(currX, currY);
+                    else ctx.lineTo(currX, currY);
+                }
+                ctx.closePath();
+            }
+
+            drawHeart(x, y, size) {
+                let w = size * 1.5;
+                let h = size;
+                let cx = x - w / 2;
+                let cy = y - h / 2;
+                ctx.moveTo(cx + w / 2, cy + h / 4);
+                ctx.bezierCurveTo(cx + w / 2, cy + h / 8, cx, cy, cx, cy + h / 4);
+                ctx.bezierCurveTo(cx, cy + h / 2, cx + w / 2, cy + h, cx + w / 2, cy + h);
+                ctx.bezierCurveTo(cx + w / 2, cy + h, cx + w, cy + h / 2, cx + w, cy + h / 4);
+                ctx.bezierCurveTo(cx + w, cy, cx + w / 2, cy + h / 8, cx + w / 2, cy + h / 4);
+                ctx.closePath();
+            }
+        }
+
+        // --- Funciones Matemáticas y de Gráficos ---
+
+        function shuffleArray(array) {
+            for (let i = array.length - 1; i > 0; i--) {
+                const j = Math.floor(Math.random() * (i + 1));
+                [array[i], array[j]] = [array[j], array[i]];
+            }
+            return array;
+        }
+
+        function getHeartPoints() {
+            const points = [];
+            const scale = Math.min(width, height) / 45; 
+            const cx = width / 2;
+            const cy = height / 2 - (scale * 2); 
+
+            // Ecuaciones paramétricas del corazón
+            for (let t = 0; t <= Math.PI * 2; t += 0.02) {
+                const x = 16 * Math.pow(Math.sin(t), 3);
+                const y = -(13 * Math.cos(t) - 5 * Math.cos(2*t) - 2 * Math.cos(3*t) - Math.cos(4*t)); 
+                points.push({ x: cx + x * scale, y: cy + y * scale });
+            }
+            return shuffleArray(points);
+        }
+
+        // Modificado para soportar múltiples líneas de texto
+        function getTextPoints(lines) {
+            const tCanvas = document.createElement('canvas');
+            const tCtx = tCanvas.getContext('2d', { willReadFrequently: true });
+            tCanvas.width = width;
+            tCanvas.height = height;
+
+            // Tamaño ajustado para acomodar dos líneas cómodamente
+            const fontSize = Math.min(width * 0.12, 110); 
+            tCtx.fillStyle = 'black';
+            tCtx.fillRect(0, 0, width, height);
+            
+            tCtx.font = `700 ${fontSize}px "Dancing Script", cursive, sans-serif`;
+            tCtx.textAlign = 'center';
+            tCtx.textBaseline = 'middle';
+            tCtx.fillStyle = 'white';
+
+            // Calcular el espacio total de las líneas para centrarlas verticalmente
+            const lineHeight = fontSize * 1.1; // Espacio entre líneas
+            const totalHeight = lineHeight * lines.length;
+            const startY = (height / 2) - (totalHeight / 2) + (lineHeight / 2);
+
+            lines.forEach((line, index) => {
+                tCtx.fillText(line, width / 2, startY + (index * lineHeight));
+            });
+
+            const imageData = tCtx.getImageData(0, 0, width, height).data;
+            const points = [];
+            
+            const step = Math.max(Math.floor(width / 250), 2); 
+
+            for (let y = 0; y < height; y += step) {
+                for (let x = 0; x < width; x += step) {
+                    const idx = (y * width + x) * 4;
+                    if (imageData[idx] > 128) {
+                        points.push({ x, y });
+                    }
+                }
+            }
+            return shuffleArray(points);
+        }
+
+        function assignTargets(points) {
+            if (points.length === 0) return;
+            for (let i = 0; i < particles.length; i++) {
+                const pt = points[i % points.length];
+                particles[i].tx = pt.x;
+                particles[i].ty = pt.y;
+            }
+        }
+
+        // NUEVA FUNCIÓN: Crear ráfaga de interacciones
+        function createInteractionBurst(x, y, isContinuous = false) {
+            const count = isContinuous ? 8 : 20; // Menos partículas para hover/touchmove
+            const speedMult = isContinuous ? 0.6 : 1; // Más lentas y decaen rápido si son continuas
+            
+            // Limitamos las partículas interactivas para no saturar
+            if (interactiveParticles.length > 1000) return;
+
+            for (let i = 0; i < count; i++) {
+                interactiveParticles.push(new InteractiveParticle(x, y, speedMult));
+            }
+        }
+
+        // --- Ciclo Principal y Lógica de Eventos ---
+
+        function handlePhaseTransitions() {
+            const currentPhase = PHASES[currentPhaseIndex];
+            
+            if (phaseFrame === 0) {
+                switch (currentPhase.name) {
+                    case 'HEART_FORM':
+                        assignTargets(getHeartPoints());
+                        break;
+                    case 'HEART_DISPERSE':
+                    case 'TEXT_DISPERSE':
+                        particles.forEach(p => p.explode());
+                        break;
+                    case 'TEXT_FORM':
+                        // Pasamos el arreglo con ambas líneas
+                        assignTargets(getTextPoints(['I Love You', 'Andrea']));
+                        break;
+                }
+            }
+
+            phaseFrame++;
+
+            if (phaseFrame >= currentPhase.duration) {
+                phaseFrame = 0;
+                currentPhaseIndex = (currentPhaseIndex + 1) % PHASES.length;
+            }
+        }
+
+        function animate() {
+            // Efecto de estela - Borrado parcial
+            ctx.globalCompositeOperation = 'source-over';
+            ctx.fillStyle = 'rgba(5, 5, 5, 0.15)'; 
+            ctx.fillRect(0, 0, width, height);
+
+            // Activar mezcla aditiva para el brillo (Neon Glow)
+            ctx.globalCompositeOperation = 'lighter';
+
+            handlePhaseTransitions();
+
+            // Dibujar y actualizar partículas de FONDO
+            for (let i = 0; i < particles.length; i++) {
+                particles[i].update();
+                particles[i].draw();
+            }
+
+            // Dibujar y actualizar partículas INTERACTIVAS
+            for (let i = interactiveParticles.length - 1; i >= 0; i--) {
+                if (!interactiveParticles[i].update()) {
+                    // Eliminar si decayeron completamente
+                    interactiveParticles.splice(i, 1);
+                } else {
+                    interactiveParticles[i].draw();
+                }
+            }
+
+            requestAnimationFrame(animate);
+        }
+
+        function resize() {
+            width = canvas.width = window.innerWidth;
+            height = canvas.height = window.innerHeight;
+            
+            if (PHASES[currentPhaseIndex].name.startsWith('HEART')) {
+                assignTargets(getHeartPoints());
+            } else if (PHASES[currentPhaseIndex].name.startsWith('TEXT')) {
+                assignTargets(getTextPoints(['I Love You', 'Andrea']));
+            }
+        }
+
+        function init() {
+            setupEventListeners();
+            window.addEventListener('resize', resize);
+            resize();
+            
+            for (let i = 0; i < PARTICLE_COUNT; i++) {
+                particles.push(new Particle());
+            }
+
+            loadingText.style.opacity = 0;
+            animate();
+        }
+
+        // NUEVA FUNCIÓN: Setup Event Listeners para Mouse y Touch
+        function setupEventListeners() {
+            // Lógica para evitar dobles eventos (touch triggers mouse click)
+            let isTouchMode = false;
+
+            canvas.addEventListener('touchstart', (e) => {
+                isTouchMode = true; // Activa modo táctil
+                e.preventDefault(); // Previene comportamiento estándar
+                for (let touch of e.changedTouches) {
+                    createInteractionBurst(touch.clientX, touch.clientY); // Burst inicial
+                }
+            }, { passive: false });
+
+            canvas.addEventListener('touchmove', (e) => {
+                isTouchMode = true;
+                e.preventDefault();
+                for (let touch of e.changedTouches) {
+                    createInteractionBurst(touch.clientX, touch.clientY, true); // Ráfaga continua
+                }
+            }, { passive: false });
+
+            // Eventos de Mouse (ignorados si Touch está activo)
+            window.addEventListener('click', (e) => {
+                if (isTouchMode) return; 
+                createInteractionBurst(e.clientX, e.clientY); // Burst inicial
+            });
+
+            window.addEventListener('mousemove', (e) => {
+                if (isTouchMode) return;
+                createInteractionBurst(e.clientX, e.clientY, true); // Ráfaga continua
+            });
+
+            // Resetea modo táctil si el mouse se mueve (útil en híbridos)
+            window.addEventListener('mouseover', () => {
+                isTouchMode = false;
+            });
+        }
+
+        // Esperar a que la fuente esté disponible antes de escanear sus píxeles
+        document.fonts.ready.then(() => {
+            init();
+        }).catch(() => {
+            init(); 
+        });
+
+    </script>
+</body>
+</html>
